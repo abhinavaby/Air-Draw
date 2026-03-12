@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>✋ AirDraw – Hand Gesture Drawing</title>
+  <meta name="description"
+    content="Draw in the air with your hand! Real-time hand gesture drawing tool powered by MediaPipe." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Lora:wght@600;700&display=swap"
+    rel="stylesheet" />
+
+  <!-- MediaPipe Hands -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    /* ─── GLOBAL RESET & TOKENS ────────────────────────────── */
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #18130f;
+      --surface: #211a14;
+      --border: rgba(232, 148, 90, 0.20);
+      --accent: #e8845a;
+      --accent2: #d4614a;
+      --green: #6bbd8e;
+      --red: #e05c5c;
+      --text: #f0e8df;
+      --muted: #8c7b6e;
+      --radius: 16px;
+      --trans: 0.25s cubic-bezier(.4, 0, .2, 1);
+    }
+
+    html,
+    body {
+      height: 100%;
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ─── LAYOUT ────────────────────────────────────────────── */
+    .app {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      grid-template-rows: 60px 1fr;
+      height: 100vh;
+    }
+
+    /* ─── HEADER ────────────────────────────────────────────── */
+    header {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: rgba(24, 19, 15, 0.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      z-index: 10;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1.25rem;
+      font-family: 'Lora', serif;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .logo span {
+      color: var(--accent);
+    }
+
+    .logo-icon {
+      width: 34px;
+      height: 34px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .header-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: background var(--trans);
+    }
+
+    .status-dot.active {
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .5
+      }
+    }
+
+    /* ─── CANVAS ARENA ──────────────────────────────────────── */
+    .arena {
+      position: relative;
+      background: #100c08;
+      overflow: hidden;
+    }
+
+    #videoEl {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      opacity: 0.35;
+    }
+
+    #landmarkCanvas,
+    #drawCanvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #landmarkCanvas {
+      pointer-events: none;
+    }
+
+    /* Mode badge */
+    .mode-badge {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      padding: 6px 14px;
+      border-radius: 99px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      background: rgba(10, 12, 20, 0.75);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(8px);
+      transition: all var(--trans);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .mode-badge .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+    }
+
+    .mode-drawing .dot {
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+    }
+
+    .mode-paused .dot {
+      background: var(--red);
+    }
+
+    .mode-no-hand .dot {
+      background: var(--muted);
+    }
+
+    /* Gesture hint overlay */
+    .gesture-hint {
+      position: absolute;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 8px 18px;
+      border-radius: 99px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      background: rgba(10, 12, 20, 0.6);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(8px);
+      white-space: nowrap;
+    }
+
+    /* FPS */
+    .fps-badge {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      padding: 4px 10px;
+      border-radius: 99px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--muted);
+      background: rgba(10, 12, 20, 0.6);
+      border: 1px solid var(--border);
+    }
+
+    /* ─── SIDEBAR ───────────────────────────────────────────── */
+    .sidebar {
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      overflow-y: auto;
+      padding: 20px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .sidebar::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .sidebar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .sidebar::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 4px;
+    }
+
+    .panel-label {
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    /* ─── COLOR PICKER ──────────────────────────────────────── */
+    .color-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .color-swatch {
+      aspect-ratio: 1;
+      border-radius: 10px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: transform var(--trans), border-color var(--trans), box-shadow var(--trans);
+    }
+
+    .color-swatch:hover {
+      transform: scale(1.15);
+    }
+
+    .color-swatch.active {
+      border-color: #fff;
+      box-shadow: 0 0 10px 2px currentColor;
+    }
+
+    .custom-color-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .custom-color-row label {
+      font-size: 0.8rem;
+      color: var(--muted);
+      flex: 1;
+    }
+
+    #customColor {
+      width: 40px;
+      height: 32px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      background: transparent;
+      padding: 0;
+    }
+
+    /* ─── BRUSH SIZE ────────────────────────────────────────── */
+    .brush-preview-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+
+    .brush-preview {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .brush-dot {
+      border-radius: 50%;
+      background: var(--accent);
+      transition: all var(--trans);
+    }
+
+    .size-val {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 4px;
+      border-radius: 4px;
+      background: linear-gradient(90deg, var(--accent) var(--pct, 40%), rgba(232, 132, 90, .15) var(--pct, 40%));
+      outline: none;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      border: 2px solid var(--bg);
+      cursor: pointer;
+    }
+
+    /* ─── OPACITY ───────────────────────────────────────────── */
+    #opacitySlider {
+      background: linear-gradient(90deg, var(--accent2) var(--pct2, 100%), rgba(212, 97, 74, .15) var(--pct2, 100%));
+    }
+
+    #opacitySlider::-webkit-slider-thumb {
+      background: var(--accent2);
+      box-shadow: 0 0 8px var(--accent2);
+    }
+
+    /* ─── TOOL BUTTONS ──────────────────────────────────────── */
+    .tool-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .tool-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 12px 6px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, .04);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: all var(--trans);
+      font-family: 'Outfit', sans-serif;
+    }
+
+    .tool-btn:hover {
+      background: rgba(232, 132, 90, .12);
+      border-color: var(--accent);
+    }
+
+    .tool-btn.active {
+      background: rgba(232, 132, 90, .22);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .tool-btn .icon {
+      font-size: 1.4rem;
+    }
+
+    /* ─── ACTION BUTTONS ─────────────────────────────────────── */
+    .action-btn {
+      width: 100%;
+      padding: 11px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, .04);
+      color: var(--text);
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all var(--trans);
+      font-family: 'Outfit', sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .action-btn:hover {
+      background: rgba(224, 92, 92, .12);
+      border-color: var(--red);
+      color: var(--red);
+    }
+
+    .action-btn.secondary:hover {
+      background: rgba(232, 132, 90, .12);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* ─── DIVIDER ───────────────────────────────────────────── */
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 0 -18px;
+    }
+
+    /* ─── GESTURE GUIDE ─────────────────────────────────────── */
+    .gesture-guide {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .gesture-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, .03);
+      font-size: 0.78rem;
+    }
+
+    .gesture-emoji {
+      font-size: 1.3rem;
+      flex-shrink: 0;
+    }
+
+    .gesture-desc {
+      color: var(--muted);
+      line-height: 1.3;
+    }
+
+    .gesture-desc strong {
+      color: var(--text);
+    }
+
+    /* ─── FINGER CURSOR ─────────────────────────────────────── */
+    #cursor {
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      transition: width .1s, height .1s;
+      mix-blend-mode: screen;
+      z-index: 20;
+    }
+
+    /* ─── START OVERLAY ─────────────────────────────────────── */
+    #startOverlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 10, 7, 0.93);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      z-index: 50;
+      backdrop-filter: blur(10px);
+    }
+
+    .start-title {
+      font-size: 2.2rem;
+      font-weight: 700;
+      font-family: 'Lora', serif;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .start-subtitle {
+      color: var(--muted);
+      font-size: 0.9rem;
+      text-align: center;
+      max-width: 320px;
+      line-height: 1.6;
+    }
+
+    .start-btn {
+      padding: 14px 36px;
+      border-radius: 99px;
+      border: none;
+      font-family: 'Outfit', sans-serif;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #18130f;
+      letter-spacing: 0.02em;
+      transition: transform var(--trans), box-shadow var(--trans);
+      box-shadow: 0 0 28px rgba(232, 132, 90, 0.40);
+    }
+
+    .start-btn:hover {
+      transform: scale(1.06);
+      box-shadow: 0 0 42px rgba(232, 132, 90, 0.65);
+    }
+
+    .start-hand-icon {
+      font-size: 4rem;
+      animation: float 3s ease-in-out infinite;
+    }
+
+    @keyframes float {
+
+      0%,
+      100% {
+        transform: translateY(0)
+      }
+
+      50% {
+        transform: translateY(-12px)
+      }
+    }
+
+    /* ─── CAMERA PERMISSION ERROR ────────────────────────────── */
+    #permError {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 10, 7, 0.96);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      z-index: 60;
+    }
+
+    #permError h2 {
+      color: var(--red);
+      font-size: 1.3rem;
+    }
+
+    #permError p {
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-align: center;
+      max-width: 300px;
+    }
+
+    /* ─── DRAWING CANVAS BG ──────────────────────────────────── */
+    #drawCanvas {
+      background: transparent;
+      cursor: none;
+    }
+
+    /* ─── SCROLLBAR ─────────────────────────────────────────── */
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 4px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="app">
+    <!-- ─── HEADER ────────────────────────────────────────── -->
+    <header>
+      <div class="logo">
+        <div class="logo-icon">✋</div>
+        Air<span>Draw</span>
+      </div>
+      <div class="header-status">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">Camera off</span>
+      </div>
+    </header>
+
+    <!-- ─── MAIN ARENA ──────────────────────────────────── -->
+    <main class="arena" id="arena">
+      <video id="videoEl" playsinline muted autoplay></video>
+      <canvas id="drawCanvas"></canvas>
+      <canvas id="landmarkCanvas"></canvas>
+
+      <div id="cursor"></div>
+
+      <div class="mode-badge mode-no-hand" id="modeBadge">
+        <div class="dot"></div>
+        <span id="modeText">No hand detected</span>
+      </div>
+
+      <div class="fps-badge" id="fpsBadge">-- FPS</div>
+
+      <div class="gesture-hint">
+        ☝️ Index up = Draw &nbsp;|&nbsp; ✌️ Two fingers = Pause &nbsp;|&nbsp; ✊ Fist = Erase mode
+      </div>
+
+      <!-- Start overlay -->
+      <div id="startOverlay">
+        <div class="start-hand-icon">🖐️</div>
+        <div class="start-title">AirDraw</div>
+        <div class="start-subtitle">Draw in mid-air using your hand! Grant camera access and point your index finger to
+          start painting.</div>
+        <button class="start-btn" id="startBtn">🎥 Start Camera</button>
+      </div>
+
+      <!-- Permission error -->
+      <div id="permError">
+        <h2>📷 Camera Access Denied</h2>
+        <p>Please allow camera access in your browser settings and reload the page.</p>
+      </div>
+    </main>
+
+    <!-- ─── SIDEBAR ─────────────────────────────────────── -->
+    <aside class="sidebar">
+
+      <!-- COLOR PALETTE -->
+      <section>
+        <div class="panel-label">Color Palette</div>
+        <div class="color-grid" id="colorGrid"></div>
+        <div class="custom-color-row">
+          <label>Custom color</label>
+          <input type="color" id="customColor" value="#e8845a" title="Pick custom color" />
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- BRUSH SIZE -->
+      <section>
+        <div class="panel-label">Brush Size</div>
+        <div class="brush-preview-row">
+          <div class="brush-preview">
+            <div class="brush-dot" id="brushDot"></div>
+          </div>
+          <span class="size-val" id="sizeVal">8px</span>
+        </div>
+        <input type="range" id="brushSize" min="2" max="60" value="8" step="1" />
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- OPACITY -->
+      <section>
+        <div class="panel-label">Opacity &nbsp;<span id="opacityVal"
+            style="color:var(--accent2);font-weight:700;">100%</span></div>
+        <input type="range" id="opacitySlider" min="10" max="100" value="100" step="5" />
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- TOOLS -->
+      <section>
+        <div class="panel-label">Drawing Mode</div>
+        <div class="tool-grid">
+          <button class="tool-btn active" id="toolPen" onclick="setTool('pen')">
+            <span class="icon">✏️</span> Pen
+          </button>
+          <button class="tool-btn" id="toolErase" onclick="setTool('erase')">
+            <span class="icon">🧹</span> Eraser
+          </button>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- ACTIONS -->
+      <section style="display:flex;flex-direction:column;gap:8px;">
+        <div class="panel-label">Actions</div>
+        <button class="action-btn secondary" onclick="saveCanvas()">
+          <span>💾</span> Save Drawing
+        </button>
+        <button class="action-btn" onclick="clearCanvas()">
+          <span>🗑️</span> Clear All
+        </button>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- GESTURE GUIDE -->
+      <section>
+        <div class="panel-label">Gesture Guide</div>
+        <div class="gesture-guide">
+          <div class="gesture-item">
+            <span class="gesture-emoji">☝️</span>
+            <div class="gesture-desc"><strong>Index finger up</strong> — Draw on canvas</div>
+          </div>
+          <div class="gesture-item">
+            <span class="gesture-emoji">✌️</span>
+            <div class="gesture-desc"><strong>Two fingers up</strong> — Lift pen (pause)</div>
+          </div>
+          <div class="gesture-item">
+            <span class="gesture-emoji">✊</span>
+            <div class="gesture-desc"><strong>Fist / all down</strong> — Eraser mode</div>
+          </div>
+          <div class="gesture-item">
+            <span class="gesture-emoji">🖐️</span>
+            <div class="gesture-desc"><strong>Open palm</strong> — Move / no draw</div>
+          </div>
+        </div>
+      </section>
+
+    </aside>
+  </div>
+
+  <script>
+    /* ═══════════════════════════════════════════════════════
+       AIRDRAW – Hand Gesture Drawing Tool
+       Uses MediaPipe Hands to detect finger positions
+    ═══════════════════════════════════════════════════════ */
+
+    // ─── DOM refs ──────────────────────────────────────────
+    const video = document.getElementById('videoEl');
+    const drawCanvas = document.getElementById('drawCanvas');
+    const lmCanvas = document.getElementById('landmarkCanvas');
+    const drawCtx = drawCanvas.getContext('2d');
+    const lmCtx = lmCanvas.getContext('2d');
+    const arena = document.getElementById('arena');
+    const cursor = document.getElementById('cursor');
+    const modeBadge = document.getElementById('modeBadge');
+    const modeText = document.getElementById('modeText');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const fpsBadge = document.getElementById('fpsBadge');
+    const startOverlay = document.getElementById('startOverlay');
+    const permError = document.getElementById('permError');
+    const brushSizeEl = document.getElementById('brushSize');
+    const brushDot = document.getElementById('brushDot');
+    const sizeVal = document.getElementById('sizeVal');
+    const opacitySlider = document.getElementById('opacitySlider');
+    const opacityVal = document.getElementById('opacityVal');
+    const customColorEl = document.getElementById('customColor');
+    const colorGrid = document.getElementById('colorGrid');
+
+    // ─── State ─────────────────────────────────────────────
+    let currentColor = '#e8845a';
+    let brushSize = 8;
+    let opacity = 1;
+    let tool = 'pen';
+    let isDrawing = false;
+    let lastX = null, lastY = null;
+    let fpsTime = performance.now(), fpsCount = 0;
+
+    // ─── Palette colors ────────────────────────────────────
+    const PALETTE = [
+      '#f0e8df', '#e8845a', '#d4614a', '#6bbd8e',
+      '#f5c06a', '#e05c5c', '#c97d3e', '#88c9a8',
+      '#d9a07a', '#a3c4a0', '#e8b89a', '#b5d4b0',
+    ];
+
+    // ─── Build palette swatches ────────────────────────────
+    (function buildPalette() {
+      PALETTE.forEach(c => {
+        const sw = document.createElement('div');
+        sw.className = 'color-swatch' + (c === '#e8845a' ? ' active' : '');
+        sw.style.background = c;
+        sw.style.setProperty('currentColor', c);
+        sw.title = c;
+        sw.addEventListener('click', () => {
+          document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+          sw.classList.add('active');
+          currentColor = c;
+          customColorEl.value = c;
+          updateBrushPreview();
+        });
+        colorGrid.appendChild(sw);
+      });
+    })();
+
+    customColorEl.addEventListener('input', e => {
+      currentColor = e.target.value;
+      document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+      updateBrushPreview();
+    });
+
+    // ─── Brush/opacity controls ────────────────────────────
+    function updateBrushPreview() {
+      const s = Math.max(6, Math.min(brushSize, 40));
+      brushDot.style.width = s + 'px';
+      brushDot.style.height = s + 'px';
+      brushDot.style.background = currentColor;
+      cursor.style.width = brushSize + 'px';
+      cursor.style.height = brushSize + 'px';
+      cursor.style.background = currentColor;
+      cursor.style.boxShadow = `0 0 ${brushSize * 1.5}px ${currentColor}`;
+    }
+
+    function updateSliderTrack(el, varName) {
+      const pct = ((el.value - el.min) / (el.max - el.min)) * 100;
+      el.style.setProperty(varName, pct + '%');
+    }
+
+    brushSizeEl.addEventListener('input', () => {
+      brushSize = parseInt(brushSizeEl.value);
+      sizeVal.textContent = brushSize + 'px';
+      updateSliderTrack(brushSizeEl, '--pct');
+      updateBrushPreview();
+    });
+
+    opacitySlider.addEventListener('input', () => {
+      opacity = parseInt(opacitySlider.value) / 100;
+      opacityVal.textContent = opacitySlider.value + '%';
+      updateSliderTrack(opacitySlider, '--pct2');
+    });
+
+    updateSliderTrack(brushSizeEl, '--pct');
+    updateSliderTrack(opacitySlider, '--pct2');
+    updateBrushPreview();
+
+    // ─── Tool selection ────────────────────────────────────
+    function setTool(t) {
+      tool = t;
+      document.getElementById('toolPen').classList.toggle('active', t === 'pen');
+      document.getElementById('toolErase').classList.toggle('active', t === 'erase');
+    }
+
+    // ─── Canvas resize ─────────────────────────────────────
+    function resizeCanvases() {
+      const w = arena.clientWidth, h = arena.clientHeight;
+      [drawCanvas, lmCanvas].forEach(c => {
+        const img = drawCtx.getImageData(0, 0, c.width, c.height);
+        c.width = w; c.height = h;
+        if (c === drawCanvas) drawCtx.putImageData(img, 0, 0);
+      });
+    }
+    resizeCanvases();
+    window.addEventListener('resize', resizeCanvases);
+
+    // ─── Clear / Save ──────────────────────────────────────
+    function clearCanvas() {
+      drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+    }
+    function saveCanvas() {
+      const tmp = document.createElement('canvas');
+      tmp.width = drawCanvas.width; tmp.height = drawCanvas.height;
+      const tc = tmp.getContext('2d');
+      tc.fillStyle = '#100c08';
+      tc.fillRect(0, 0, tmp.width, tmp.height);
+      tc.drawImage(drawCanvas, 0, 0);
+      const a = document.createElement('a');
+      a.download = 'airdraw-' + Date.now() + '.png';
+      a.href = tmp.toDataURL('image/png');
+      a.click();
+    }
+
+    // ─── Drawing helpers ───────────────────────────────────
+    function drawStroke(x1, y1, x2, y2) {
+      drawCtx.save();
+      drawCtx.globalAlpha = tool === 'erase' ? 1 : opacity;
+      drawCtx.globalCompositeOperation = tool === 'erase' ? 'destination-out' : 'source-over';
+      drawCtx.strokeStyle = tool === 'erase' ? 'rgba(0,0,0,1)' : currentColor;
+      drawCtx.lineWidth = tool === 'erase' ? brushSize * 3 : brushSize;
+      drawCtx.lineCap = 'round';
+      drawCtx.lineJoin = 'round';
+
+      // Glow effect for pen
+      if (tool === 'pen') {
+        drawCtx.shadowColor = currentColor;
+        drawCtx.shadowBlur = brushSize * 1.2;
+      }
+
+      drawCtx.beginPath();
+      drawCtx.moveTo(x1, y1);
+      drawCtx.lineTo(x2, y2);
+      drawCtx.stroke();
+      drawCtx.restore();
+    }
+
+    // ─── Hand landmark drawing ─────────────────────────────
+    const CONNECTIONS = [
+      [0, 1], [1, 2], [2, 3], [3, 4],       // thumb
+      [0, 5], [5, 6], [6, 7], [7, 8],       // index
+      [0, 9], [9, 10], [10, 11], [11, 12],  // middle
+      [0, 13], [13, 14], [14, 15], [15, 16],// ring
+      [0, 17], [17, 18], [18, 19], [19, 20],// pinky
+      [5, 9], [9, 13], [13, 17],          // palm
+    ];
+    const FINGER_TIPS = [4, 8, 12, 16, 20];
+    const FINGER_LABELS = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
+    const LABEL_TIP_IDX = [4, 8, 12, 16, 20];
+
+    function drawLandmarks(landmarks, handedness) {
+      const W = lmCanvas.width, H = lmCanvas.height;
+      lmCtx.clearRect(0, 0, W, H);
+
+      if (!landmarks) return;
+
+      const pts = landmarks.map(lm => ({
+        x: (1 - lm.x) * W,
+        y: lm.y * H,
+      }));
+
+      // Glow connections
+      CONNECTIONS.forEach(([a, b]) => {
+        lmCtx.save();
+        lmCtx.strokeStyle = '#00e5a0';
+        lmCtx.lineWidth = 2;
+        lmCtx.shadowColor = '#00e5a0';
+        lmCtx.shadowBlur = 8;
+        lmCtx.beginPath();
+        lmCtx.moveTo(pts[a].x, pts[a].y);
+        lmCtx.lineTo(pts[b].x, pts[b].y);
+        lmCtx.stroke();
+        lmCtx.restore();
+      });
+
+      // Dots
+      pts.forEach((p, i) => {
+        const isTip = FINGER_TIPS.includes(i);
+        lmCtx.save();
+        lmCtx.beginPath();
+        lmCtx.arc(p.x, p.y, isTip ? 6 : 4, 0, Math.PI * 2);
+        lmCtx.fillStyle = isTip ? '#ff5e7e' : '#00e5a0';
+        lmCtx.shadowColor = isTip ? '#ff5e7e' : '#00e5a0';
+        lmCtx.shadowBlur = 10;
+        lmCtx.fill();
+        lmCtx.restore();
+      });
+
+      // Labels for fingertips
+      LABEL_TIP_IDX.forEach((idx, i) => {
+        const p = pts[idx];
+        // Pill label
+        const label = FINGER_LABELS[i];
+        lmCtx.save();
+        lmCtx.font = 'bold 11px Outfit, sans-serif';
+        const tw = lmCtx.measureText(label).width;
+        const pw = tw + 12, ph = 18;
+        const px = p.x - pw / 2, py = p.y - ph - 8;
+
+        // Background pill
+        lmCtx.fillStyle = '#ff5e7e';
+        lmCtx.shadowColor = '#ff5e7e';
+        lmCtx.shadowBlur = 8;
+        roundRect(lmCtx, px, py, pw, ph, 5);
+        lmCtx.fill();
+
+        // Text
+        lmCtx.shadowBlur = 0;
+        lmCtx.fillStyle = '#fff';
+        lmCtx.textAlign = 'center';
+        lmCtx.textBaseline = 'middle';
+        lmCtx.fillText(label, p.x, py + ph / 2);
+        lmCtx.restore();
+      });
+
+      // Hand type label + bounding box
+      const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+      const bx1 = Math.min(...xs) - 18, by1 = Math.min(...ys) - 18;
+      const bx2 = Math.max(...xs) + 18, by2 = Math.max(...ys) + 18;
+
+      lmCtx.save();
+      lmCtx.strokeStyle = '#00e5a0';
+      lmCtx.lineWidth = 2;
+      lmCtx.shadowColor = '#00e5a0';
+      lmCtx.shadowBlur = 12;
+      lmCtx.strokeRect(bx1, by1, bx2 - bx1, by2 - by1);
+
+      lmCtx.fillStyle = '#00e5a0';
+      lmCtx.shadowBlur = 0;
+      lmCtx.font = 'bold 12px Outfit, sans-serif';
+      const htxt = 'Hand Detection · ' + (handedness || 'Right');
+      lmCtx.fillText(htxt, bx1 + 6, by1 - 6);
+      lmCtx.restore();
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    // ─── Gesture detection ─────────────────────────────────
+    // Returns { drawing, erasing, paused }
+    function detectGesture(lm) {
+      if (!lm) return { drawing: false, erasing: false, paused: false };
+
+      // Tip y < pip y → finger is "up"
+      function fingerUp(tip, pip) {
+        return lm[tip].y < lm[pip].y;
+      }
+      const indexUp = fingerUp(8, 6);
+      const middleUp = fingerUp(12, 10);
+      const ringUp = fingerUp(16, 14);
+      const pinkyUp = fingerUp(20, 18);
+      const thumbUp = lm[4].x < lm[3].x; // for right hand (flipped)
+
+      const upCount = [indexUp, middleUp, ringUp, pinkyUp].filter(Boolean).length;
+
+      if (upCount === 0) {
+        // Fist – eraser
+        return { drawing: false, erasing: true, paused: false };
+      } else if (indexUp && !middleUp && !ringUp && !pinkyUp) {
+        // Only index up – draw
+        return { drawing: true, erasing: false, paused: false };
+      } else if (indexUp && middleUp && !ringUp && !pinkyUp) {
+        // Two fingers – pause
+        return { drawing: false, erasing: false, paused: true };
+      } else {
+        // Other (open palm etc) – move without drawing
+        return { drawing: false, erasing: false, paused: false };
+      }
+    }
+
+    // ─── MediaPipe Hands setup ─────────────────────────────
+    let hands;
+
+    function initHands() {
+      hands = new Hands({
+        locateFile: file =>
+          `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.75,
+        minTrackingConfidence: 0.6,
+      });
+
+      hands.onResults(onResults);
+    }
+
+    function onResults(results) {
+      // FPS counter
+      fpsCount++;
+      const now = performance.now();
+      if (now - fpsTime >= 1000) {
+        fpsBadge.textContent = fpsCount + ' FPS';
+        fpsCount = 0;
+        fpsTime = now;
+      }
+
+      const W = lmCanvas.width, H = lmCanvas.height;
+
+      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+        // No hand
+        lmCtx.clearRect(0, 0, W, H);
+        isDrawing = false;
+        lastX = null; lastY = null;
+        setModeUI('no-hand', 'No hand detected');
+        cursor.style.display = 'none';
+        return;
+      }
+
+      const lm = results.multiHandLandmarks[0];
+      const handedness = results.multiHandedness?.[0]?.label || 'Right';
+      const gesture = detectGesture(lm);
+
+      // Index tip position (mirrored)
+      const tipX = (1 - lm[8].x) * W;
+      const tipY = lm[8].y * H;
+
+      // Move cursor
+      cursor.style.display = 'block';
+      cursor.style.left = tipX + 'px';
+      cursor.style.top = tipY + 'px';
+
+      // Draw landmarks
+      drawLandmarks(lm, handedness);
+
+      // Handle gestures
+      if (gesture.erasing) {
+        // Auto-switch to erase
+        setTool('erase');
+        setModeUI('drawing', '✊ Eraser active');
+        // Erase around fist center (wrist)
+        const cx = (1 - lm[0].x) * W, cy = lm[0].y * H;
+        drawCtx.save();
+        drawCtx.globalCompositeOperation = 'destination-out';
+        drawCtx.beginPath();
+        drawCtx.arc(cx, cy, brushSize * 3, 0, Math.PI * 2);
+        drawCtx.fill();
+        drawCtx.restore();
+        lastX = null; lastY = null;
+      } else if (gesture.drawing) {
+        setTool('pen');
+        setModeUI('drawing', '☝️ Drawing');
+        if (lastX !== null && lastY !== null) {
+          drawStroke(lastX, lastY, tipX, tipY);
+        }
+        lastX = tipX; lastY = tipY;
+      } else if (gesture.paused) {
+        setModeUI('paused', '✌️ Pen lifted');
+        lastX = null; lastY = null;
+      } else {
+        setModeUI('no-hand', '🖐️ Open palm – moving');
+        lastX = null; lastY = null;
+      }
+    }
+
+    function setModeUI(mode, text) {
+      modeBadge.className = 'mode-badge mode-' +
+        (mode === 'drawing' ? 'drawing' : mode === 'paused' ? 'paused' : 'no-hand');
+      modeText.textContent = text;
+    }
+
+    // ─── Camera start ──────────────────────────────────────
+    document.getElementById('startBtn').addEventListener('click', startCamera);
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+          audio: false,
+        });
+        video.srcObject = stream;
+        video.onloadedmetadata = () => video.play();
+        startOverlay.style.display = 'none';
+        statusDot.classList.add('active');
+        statusText.textContent = 'Camera active';
+
+        initHands();
+
+        // Use MediaPipe Camera utility for processing frames
+        const mp_camera = new Camera(video, {
+          onFrame: async () => {
+            await hands.send({ image: video });
+          },
+          width: 1280,
+          height: 720,
+        });
+        mp_camera.start();
+      } catch (err) {
+        startOverlay.style.display = 'none';
+        permError.style.display = 'flex';
+        console.error('Camera error:', err);
+      }
+    }
+  </script>
+</body>
+
+</html>
